@@ -1,0 +1,5 @@
+n = 3
+goal = swaps
+output = build/test_output.txt
+max_stages = 6
+max_swaps = 6

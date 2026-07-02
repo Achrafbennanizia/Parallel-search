@@ -1,0 +1,38 @@
+# Cursor
+.cursor/
+
+# Build artifacts
+cpp/build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Generated outputs & benchmarks
+cpp/results/
+!cpp/results/.gitkeep
+
+# App output
+median_network.txt
+**/median_network.txt
+
+# Large binary datasets
+*.bin
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+
+# OS & editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log

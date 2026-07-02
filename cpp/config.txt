@@ -1,0 +1,10 @@
+# Example invocations
+
+# Compare sequential vs TBB in one run (prints Speedup S and Efficiency E):
+# ./build/p_suche --n 5 --opt size --compare --threads 8 --first --out build/median_network.txt
+
+# TBB parallel only:
+# ./build/p_suche --n 7 --opt depth --threads 8 --first --out build/median_network.txt
+
+# Sequential only:
+# ./build/p_suche --n 5 --opt size --sequential --first --out build/median_network.txt
