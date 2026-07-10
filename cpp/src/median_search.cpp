@@ -1,13 +1,3 @@
-// median_search.cpp
-// Suche nach groessen- bzw. tiefenoptimalen Median-Netzwerken (n ungerade).
-//
-// Konventionen:
-//   * Kanaele 0..n-1. Komparator [x,y] mit x<y: Minimum -> x, Maximum -> y.
-//   * Der Median muss nach dem Netzwerk auf Kanal m = (n-1)/2 liegen.
-//
-//   * Parallelisierung: Intel oneTBB (parallel_for_each, concurrent_vector).
-//     Praefixtiefe 3 im Groessenmodus fuer feinere Tasks / Work-Stealing.
-//
 // Build:   make  (requires Intel oneTBB)
 // Beispiel: ./build/p_suche --n 7 --opt depth --compare --threads 8 --out netz.txt
 
