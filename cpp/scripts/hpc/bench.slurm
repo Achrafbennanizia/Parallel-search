@@ -14,20 +14,24 @@ cd "${SLURM_SUBMIT_DIR}"
 source scripts/hpc/setup_env.sh
 
 THREADS="${SLURM_CPUS_PER_TASK:-8}"
+JOB_ID="${SLURM_JOB_ID:-0}"
+RUN_TS="$(date '+%Y-%m-%d %H:%M:%S')"
+
 mkdir -p results build
 
-echo "=== p_suche HPC benchmark (TBB --compare) ==="
-echo "host=$(hostname)  threads=${THREADS}  date=$(date -Iseconds)"
+echo "=== p_suche HPC benchmark (sequential vs TBB --compare) ==="
+echo "host=$(hostname)  threads=${THREADS}  job=${JOB_ID}  date=$(date -Iseconds)"
 
 make clean
 make BUILD=release
 
-echo "--- n=5 size: sequential vs TBB in one run ---"
-./build/p_suche --n 5 --opt size --compare --first --threads "${THREADS}" \
-  --out results/hpc_n5_compare.txt | tee results/hpc_n5_compare.log
-
-echo "--- n=7 size: sequential vs TBB in one run ---"
-./build/p_suche --n 7 --opt size --compare --first --threads "${THREADS}" \
-  --out results/hpc_n7_compare.txt | tee results/hpc_n7_compare.log
+for n in 5 7; do
+    lb="$(case "${n}" in 5) echo 7 ;; 7) echo 13 ;; esac)"
+    log="results/hpc_n${n}_compare.log"
+    echo "--- n=${n} size: sequential vs TBB ---"
+    ./build/p_suche --n "${n}" --opt size --compare --first --threads "${THREADS}" --lb "${lb}" \
+        --out "results/hpc_n${n}_compare.txt" 2>&1 | tee "${log}"
+    scripts/hpc/append_benchmark_csv.sh "${log}" "${n}" "${THREADS}" "${JOB_ID}" "${RUN_TS}" || true
+done
 
 echo "=== HPC benchmark done ==="

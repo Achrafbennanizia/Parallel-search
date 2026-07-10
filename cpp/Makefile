@@ -32,7 +32,7 @@ ifneq ($(TBB_PREFIX),)
   LDFLAGS += -L$(TBB_PREFIX)/lib -ltbb
 else ifneq ($(TBBROOT),)
   CXXFLAGS += -I$(TBBROOT)/include
-  LDFLAGS += -L$(TBBROOT)/lib64 -L$(TBBROOT)/lib -ltbb
+  LDFLAGS += -L$(TBBROOT)/lib/intel64 -L$(TBBROOT)/lib64 -L$(TBBROOT)/lib -ltbb
 else
   CXXFLAGS += -I/usr/include/tbb
   LDFLAGS += -ltbb -pthread

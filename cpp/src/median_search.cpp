@@ -5,6 +5,9 @@
 //   * Kanaele 0..n-1. Komparator [x,y] mit x<y: Minimum -> x, Maximum -> y.
 //   * Der Median muss nach dem Netzwerk auf Kanal m = (n-1)/2 liegen.
 //
+//   * Parallelisierung: Intel oneTBB (parallel_for_each, concurrent_vector).
+//     Praefixtiefe 3 im Groessenmodus fuer feinere Tasks / Work-Stealing.
+//
 // Build:   make  (requires Intel oneTBB)
 // Beispiel: ./build/p_suche --n 7 --opt depth --compare --threads 8 --out netz.txt
 
@@ -15,14 +18,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
-#include <tbb/blocked_range.h>
+#include <tbb/concurrent_vector.h>
 #include <tbb/global_control.h>
-#include <tbb/parallel_for.h>
-#include <tbb/spin_mutex.h>
+#include <tbb/parallel_for_each.h>
+#include <tbb/task_arena.h>
 
 using u32 = uint32_t;
 using u64 = uint64_t;
@@ -58,38 +61,33 @@ static bool F_COMPARE = false;
 
 static std::atomic<bool> g_stop{false};
 static std::atomic<unsigned long long> g_nodes{0};
-static std::vector<Net> g_sols;
-static tbb::spin_mutex g_sol_mutex;
+static tbb::concurrent_vector<Net> g_sols;
+static std::unique_ptr<tbb::global_control> g_thread_control;
 
 static int effectiveThreads() {
     if (F_THREADS > 0) {
         return F_THREADS;
     }
-    const unsigned hw = std::thread::hardware_concurrency();
-    return hw == 0 ? 1 : static_cast<int>(hw);
+    return tbb::this_task_arena::max_concurrency();
 }
 
-template <typename Fn>
-static void parallel_tasks(long count, Fn fn) {
-    if (count <= 0) {
-        return;
+static void setup_thread_control() {
+    g_thread_control.reset();
+    if (F_PARALLEL && F_THREADS > 0) {
+        g_thread_control = std::make_unique<tbb::global_control>(
+            tbb::global_control::max_allowed_parallelism, static_cast<std::size_t>(F_THREADS));
     }
-    if (!F_PARALLEL || count == 1) {
-        for (long k = 0; k < count; ++k) {
-            fn(k);
+}
+
+template <typename Container, typename Fn>
+static void foreach_task(const Container& tasks, Fn fn) {
+    if (!F_PARALLEL || tasks.size() <= 1) {
+        for (const auto& task : tasks) {
+            fn(task);
         }
         return;
     }
-
-    const int threads = effectiveThreads();
-    tbb::global_control control(tbb::global_control::max_allowed_parallelism,
-                                static_cast<std::size_t>(threads));
-    tbb::parallel_for(tbb::blocked_range<long>(0, count),
-                      [&](const tbb::blocked_range<long>& range) {
-                          for (long k = range.begin(); k < range.end(); ++k) {
-                              fn(k);
-                          }
-                      });
+    tbb::parallel_for_each(tasks.begin(), tasks.end(), fn);
 }
 
 static int pc32(u32 x) { return __builtin_popcount(x); }
@@ -385,12 +383,12 @@ static bool reducible(const Net& n) {
 }
 
 static void record(const Net& net) {
-    tbb::spin_mutex::scoped_lock lock(g_sol_mutex);
-    if (!g_stop.load()) {
-        g_sols.push_back(net);
-        if (F_FIRST || (F_LIMIT > 0 && static_cast<long>(g_sols.size()) >= F_LIMIT)) {
-            g_stop.store(true);
-        }
+    if (g_stop.load(std::memory_order_relaxed)) {
+        return;
+    }
+    g_sols.push_back(net);
+    if (F_FIRST || (F_LIMIT > 0 && static_cast<long>(g_sols.size()) >= F_LIMIT)) {
+        g_stop.store(true);
     }
 }
 
@@ -473,20 +471,20 @@ static int run_size() {
         const auto t0 = std::chrono::steady_clock::now();
 
         std::vector<STask> tasks;
-        const int P = std::min(2, s);
+        const int P = std::min(3, s);
         {
             Engine E;
             std::vector<int> cur;
             gen_prefix(E, s, P, -1, cur, tasks);
         }
 
-        parallel_tasks(static_cast<long>(tasks.size()), [&](long k) {
+        foreach_task(tasks, [&](const STask& tk) {
             if (g_stop.load(std::memory_order_relaxed)) {
                 return;
             }
             Engine E;
             int prev = -1;
-            for (int idx : tasks[static_cast<std::size_t>(k)].idxs) {
+            for (int idx : tk.idxs) {
                 const Cmp c = PAIRS[static_cast<std::size_t>(idx)];
                 E.apply(c.i, c.j);
                 E.seq.push_back(c);
@@ -642,14 +640,14 @@ static int run_depth() {
                 tasks.swap(keep);
             }
             ntasks = tasks.size();
-            parallel_tasks(static_cast<long>(tasks.size()), [&](long k) {
+            foreach_task(tasks, [&](const Stage& st) {
                 if (g_stop.load(std::memory_order_relaxed)) {
                     return;
                 }
                 Engine E;
                 Net net;
-                net.push_back(tasks[static_cast<std::size_t>(k)]);
-                for (Cmp c : tasks[static_cast<std::size_t>(k)]) {
+                net.push_back(st);
+                for (Cmp c : st) {
                     E.apply(c.i, c.j);
                 }
                 dfs_depth(E, net, d - 1);
@@ -687,7 +685,7 @@ static void reset_search_state() {
 }
 
 static bool write_solutions(const std::string& outfile, const std::string& mode) {
-    std::vector<Net> sols = g_sols;
+    std::vector<Net> sols(g_sols.begin(), g_sols.end());
     if (mode == "depth") {
         std::vector<Net> keep;
         for (auto& n : sols) {
@@ -835,6 +833,7 @@ int main(int argc, char** argv) {
     if (F_COMPARE) {
         reset_search_state();
         F_PARALLEL = false;
+        setup_thread_control();
         const auto t0 = std::chrono::steady_clock::now();
         seqOpt = run_search(mode);
         seqTime = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -842,6 +841,7 @@ int main(int argc, char** argv) {
 
         reset_search_state();
         F_PARALLEL = true;
+        setup_thread_control();
         const auto t1 = std::chrono::steady_clock::now();
         parOpt = run_search(mode);
         parTime = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
@@ -862,6 +862,7 @@ int main(int argc, char** argv) {
             std::printf("Warnung: Optimalwerte unterscheiden sich (%d vs %d)\n", seqOpt, parOpt);
         }
     } else {
+        setup_thread_control();
         const auto t0 = std::chrono::steady_clock::now();
         opt = run_search(mode);
         dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
